@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { ethers } from 'ethers';
-import { PERMIT2_ADDRESS, POLYGON_TOKENS, MAINNET_TOKENS } from '../utils/constants';
+import { ethers,getAddress, ZeroAddress } from 'ethers';
+import { PERMIT2_ADDRESS, POLYGON_TOKENS,ETHEREUM_TOKEN/*, BINANCE_SMART_CHAIN_TOKEN*/} from '../utils/constants';
 import { erc20Abi } from 'viem';
 import { Link } from 'react-router-dom';
 import axios from 'axios';
 import { ToastContainer, toast } from 'react-toastify';
+//import logo from '../assets/logo1.png';
 
 const BuySellSwap = () => {
     const [showCheckout, setShowCheckout] = useState(false);
@@ -18,7 +19,8 @@ const BuySellSwap = () => {
     const [provider, setProvider] = useState(null);
     const [currency, setCurrency] = useState(POLYGON_TOKENS[0]);
     const [buyCurrency, setBuyCurrency] = useState(POLYGON_TOKENS[1]);
-    const [mainnetCurrency, setMainnetCurrency] = useState(MAINNET_TOKENS[0]);
+    const [ethereumCurrency, settEhereumCurrency] = useState(ETHEREUM_TOKEN[0]);
+    //const [binancesmartchainCurrency, setbinancesmartchainCurrency] = useState(BINANCE_SMART_CHAIN_TOKEN[0]);
     const [upChain, setUpChain] = useState("POLYGON");
     const [downChain, setDownChain] = useState("POLYGON");
     const [routing, setRouting] = useState(null);
@@ -74,6 +76,12 @@ const BuySellSwap = () => {
             console.log('Failed to connect to MetaMask. Please try again.');
         }
     };
+    const disconnectWallet = () => {
+        setProvider(null);
+        setIsConnected(false);
+        setAccountAddress('');
+        console.log('Wallet disconnected.');
+    };
 
     // Fetch indicative price using Rubic API and save the response for swap use
     const fetchIndicativePrice = async (sell) => {
@@ -105,7 +113,12 @@ const BuySellSwap = () => {
                     }
                 }
             );
-
+            if(response?.data?.name == "NoRoutesAvailableException")
+            {
+                setRouting(null);
+                setBuyAmount(0);
+                return;
+            }
             const priceData = response.data;
             setFetched(priceData);
             setQuoteId(priceData.id); // Store the quote ID
@@ -117,10 +130,10 @@ const BuySellSwap = () => {
                 const lastRoute = priceData.routing[priceData.routing.length - 1];
                 const lastPath = lastRoute.path[lastRoute.path.length - 1];
                 if (lastPath?.amount) {
-                    setBuyAmount(parseFloat(lastPath.amount).toFixed(3));
+                    setBuyAmount(parseFloat(lastPath.amount).toFixed(7));
                 }
             } else if (priceData?.routing?.[0]?.path?.[1]?.amount) {
-                setBuyAmount(parseFloat(priceData.routing[0].path[1].amount).toFixed(3));
+                setBuyAmount(parseFloat(priceData.routing[0].path[1].amount).toFixed(7));
             }
             setRouting(priceData.routing);
 
@@ -151,7 +164,7 @@ const BuySellSwap = () => {
             
             const signer = await provider.getSigner();
             console.log("Signer obtained:", signer);
-            
+
             const tokenContract = new ethers.Contract(tokenAddress, erc20Abi, signer);
             console.log("Token contract created:", tokenContract);
             
@@ -174,6 +187,8 @@ const BuySellSwap = () => {
     // Execute swap transaction
     const executeSwap = async (transaction) => {
         try {
+            const provider = new ethers.BrowserProvider(window.ethereum);            
+            const signer = await provider.getSigner();
             console.log('Transaction details:', transaction);
             const tx = await signer.sendTransaction({
                 to: transaction.to,
@@ -207,7 +222,7 @@ const BuySellSwap = () => {
             fromAddress: accountAddress,
             id: quoteId
             // nativeBlacklist: quoteResponse.nativeBlacklist || [], // Ensure these match the quote response
-            // foreignBlacklist: quoteResponse.foreignBlacklist || [], 
+            // foreignBlacklist: quoteResponse.foreignBlacklist || {} 
         };
 
         const response = await axios.post('http://localhost:4300/swap',
@@ -233,7 +248,7 @@ const BuySellSwap = () => {
         console.log("Calling setAllowance with:", approvalAddress, currency.address, sellAmount); // Add this line
         await setAllowance(approvalAddress, currency.address, sellAmount);
         console.log("setAllowance called");
-        try {
+        try {          
             // Step 1: Fetch swap data from Rubic API
             const swapData = await fetchSwapData();
             console.log("Swap data fetched:", swapData);
@@ -244,26 +259,29 @@ const BuySellSwap = () => {
             const requiredAmount = ethers.parseUnits(sellAmount.toString(), currency.decimals);
             console.log("Required amount:", requiredAmount);
 
-            if (approvalNeeded) {
+            if (approvalNeeded && (getAddress(currency.address) != ZeroAddress)) {
+                // Ensure provider and signer are properly set
+                const provider = new ethers.BrowserProvider(window.ethereum);            
+                const signer = await provider.getSigner();
                 const tokenContract = new ethers.Contract(currency.address, erc20Abi, signer);
                 console.log("Token contract created:", tokenContract);
                 const allowance = await tokenContract.allowance(accountAddress, approvalNeeded);
                 console.log("Allowance fetched:", allowance);
 
                 // If allowance is less than required amount, approve the spender
-                if (allowance.lt(requiredAmount)) {
+              //  if (allowance.lt(requiredAmount)) {
                     // Step 2a: Set allowance to 0 to prevent race conditions
-                    const zeroTx = await tokenContract.approve(approvalNeeded, 0);
-                    console.log("Zero allowance transaction sent:", zeroTx);
-                    await zeroTx.wait();
-                    console.log("Allowance reset to 0 confirmed:", zeroTx.hash);
+                    // const zeroTx = await tokenContract.approve(approvalNeeded, 0);
+                    // console.log("Zero allowance transaction sent:", zeroTx);
+                    // await zeroTx.wait();
+                    // console.log("Allowance reset to 0 confirmed:", zeroTx.hash);
 
                     // Step 2b: Set allowance to the required amount
                     const approvalTx = await tokenContract.approve(approvalNeeded, requiredAmount);
                     console.log("Approval transaction sent:", approvalTx);
                     await approvalTx.wait();
                     console.log("Approval successful:", approvalTx.hash);
-                }
+              //  }
             }
 
             // Step 3: Execute the swap
@@ -290,7 +308,7 @@ const BuySellSwap = () => {
                                 <div className="flex justify-between items-center mb-6">
                                     <img src="/src/assets/Home/acebit-logo.webp" alt="Ramp Logo" className="h-[24px]" />
                                     {isConnected ?
-                                        (<>{`${accountAddress.slice(0, 3)}...${accountAddress.slice(-8)}`}</>) :
+                                        (<><div className="flex space-x-2"><button className="bg-green-700 text-white rounded-2xl px-4 py-1 rounded-lg" onClick={disconnectWallet}>Disconnect Wallet</button></div>{`${accountAddress.slice(0, 3)}...${accountAddress.slice(-8)}`}</>) :
                                         (<div className="flex space-x-2"><button className="bg-green-700 text-white rounded-2xl px-4 py-1 rounded-lg" onClick={connectWallet}>Connect Wallet</button></div>)}
                                 </div>
                                 <div className="mb-4 border border-grey-100 px-[15px] py-[13px]">
@@ -334,13 +352,23 @@ const BuySellSwap = () => {
                                                             <div
                                                                 className={`flex flex-col items-center cursor-pointer p-2 rounded-lg ${currency?.chainId === 1 ? 'bg-gray-200' : 'bg-white'}`}
                                                                 onClick={() => {
-                                                                    setCurrency(MAINNET_TOKENS[0]);
+                                                                    setCurrency(ETHEREUM_TOKEN[0]);
                                                                     setUpChain("ETH");
                                                                 }}
                                                             >
                                                                 <img src="https://cryptologos.cc/logos/ethereum-eth-logo.svg?v=025" alt="Ethereum" className="w-10 h-10 mb-1" />
                                                                 <span className="text-xs">Ethereum</span>
                                                             </div>
+                                                            {/* <div
+                                                                className={`flex flex-col items-center cursor-pointer p-2 rounded-lg ${currency?.chainId === 56 ? 'bg-gray-200' : 'bg-white'}`}
+                                                                onClick={() => {
+                                                                    setCurrency(BINANCE_SMART_CHAIN_TOKEN[0]);
+                                                                    setUpChain("BSC");
+                                                                }}
+                                                            >
+                                                                <img src={logo} alt="binancesmartchain" className="w-10 h-10 mb-1" />
+                                                                <span className="text-xs">Binance smart chain</span>
+                                                            </div> */}
                                                             <div
                                                                 className={`flex flex-col items-center cursor-pointer p-2 rounded-lg ${currency?.chainId === 137 ? 'bg-gray-200' : 'bg-white'}`}
                                                                 onClick={() => {
@@ -352,9 +380,10 @@ const BuySellSwap = () => {
                                                                 <span className="text-xs">Polygon</span>
                                                             </div>
                                                         </div>
-                                                        <input type="text" placeholder="Find your currency" className="border w-full p-3 rounded-lg mb-4" />
+                                                        {/* <input type="text" placeholder="Find your currency" className="border w-full p-3 rounded-lg mb-4" /> */}
                                                         <div className="overflow-y-auto h-[350px]">
-                                                            {(currency?.chainId === 1 ? MAINNET_TOKENS : POLYGON_TOKENS).map((token, index) => (
+                                                            {/* {(currency?.chainId === 1 ? ETHEREUM_TOKEN : currency?.chainId == 137 ? POLYGON_TOKENS: BINANCE_SMART_CHAIN_TOKEN) */}
+                                                            {(currency?.chainId === 1 ? ETHEREUM_TOKEN : POLYGON_TOKENS).map((token, index) => (
                                                                 <div key={index} className="flex justify-between items-center p-3 border-b cursor-pointer hover:bg-gray-100" onClick={() => { setCurrency(token); setShowCurrencyModal(false); setShowCheckout(false); }}>
                                                                     <div className="flex items-center space-x-2">
                                                                         <img src={token.logoURI} alt="" className="w-[40px] h-[40px]" />
@@ -431,13 +460,23 @@ const BuySellSwap = () => {
                                                             <div
                                                                 className={`flex flex-col items-center cursor-pointer p-2 rounded-lg ${buyCurrency?.chainId === 1 ? 'bg-gray-200' : 'bg-white'}`}
                                                                 onClick={() => {
-                                                                    setBuyCurrency(MAINNET_TOKENS[0]);
+                                                                    setBuyCurrency(ETHEREUM_TOKEN[0]);
                                                                     setDownChain("ETH");
                                                                 }}
                                                             >
                                                                 <img src="https://cryptologos.cc/logos/ethereum-eth-logo.svg?v=025" alt="Ethereum" className="w-10 h-10 mb-1" />
                                                                 <span className="text-xs">Ethereum</span>
                                                             </div>
+                                                            {/* <div
+                                                                className={`flex flex-col items-center cursor-pointer p-2 rounded-lg ${buyCurrency?.chainId === 56 ? 'bg-gray-200' : 'bg-white'}`}
+                                                                onClick={() => {
+                                                                    setBuyCurrency(BINANCE_SMART_CHAIN_TOKEN[0]);
+                                                                    setDownChain("BSC");
+                                                                }}
+                                                            >
+                                                                <img src={logo} alt="binancesmartchain" className="w-10 h-10 mb-1" />
+                                                                <span className="text-xs">Binance smart chain</span>
+                                                            </div> */}
                                                             <div
                                                                 className={`flex flex-col items-center cursor-pointer p-2 rounded-lg ${buyCurrency?.chainId === 137 ? 'bg-gray-200' : 'bg-white'}`}
                                                                 onClick={() => {
@@ -449,9 +488,10 @@ const BuySellSwap = () => {
                                                                 <span className="text-xs">Polygon</span>
                                                             </div>
                                                         </div>
-                                                        <input type="text" placeholder="Find your currency" className="border w-full p-3 rounded-lg mb-4" />
+                                                        {/* <input type="text" placeholder="Find your currency" className="border w-full p-3 rounded-lg mb-4" /> */}
                                                         <div className="overflow-y-auto h-[350px]">
-                                                            {(buyCurrency?.chainId === 1 ? MAINNET_TOKENS : POLYGON_TOKENS).map((token, index) => (
+                                                        {/* {(buyCurrency?.chainId === 1 ? ETHEREUM_TOKEN : buyCurrency?.chainId == 137 ?POLYGON_TOKENS : BINANCE_SMART_CHAIN_TOKEN).map((token, index) => ( */}
+                                                            {(buyCurrency?.chainId === 1 ? ETHEREUM_TOKEN : POLYGON_TOKENS).map((token, index) => (
                                                                 <div key={index} className="flex justify-between items-center p-3 border-b cursor-pointer hover:bg-gray-100" onClick={() => { setBuyCurrency(token); setShowCurrencyModal1(false); setShowCheckout(false); }}>
                                                                     <div className="flex items-center space-x-2">
                                                                         <img src={token.logoURI} alt="" className="w-[40px] h-[40px]" />
@@ -470,7 +510,7 @@ const BuySellSwap = () => {
                                     </div>
                                 </div>
 
-                                {!isConnected ?
+                                {isConnected ?
                                     (
                                         <button onClick={handleProceedClick} className="bg-green-700 text-white w-[83%] py-3 rounded-lg absolute bottom-10 left-8 flex items-center justify-between px-4">
                                             Proceed
@@ -578,7 +618,8 @@ const BuySellSwap = () => {
                                                                     </span>
                                                                     &nbsp;—&nbsp;
                                                                     Amount: {route.path[0].amount} &nbsp;
-                                                                    Blockchain: {route.path[0].blockchainId === 1 ? 'Ethereum' : 'Polygon'}
+                                                                    Blockchain: {route.path[0].blockchainId === 1 ? 'Ethereum' :  'Polygon'}
+                                                                    {/* Blockchain: {route.path[0].blockchainId === 1 ? 'Ethereum' : route.path[0].blockchainId == 137 ? 'Polygon': 'binancesmartchain'} */}
                                                                 </li>
                                                             ) : (
                                                                 <>
@@ -588,7 +629,8 @@ const BuySellSwap = () => {
                                                                         </span>
                                                                         &nbsp;—&nbsp;
                                                                         Amount: {route.path[0].amount} &nbsp;
-                                                                        Blockchain: {route.path[0].blockchainId === 1 ? 'Ethereum' : 'Polygon'}
+                                                                        Blockchain: {route.path[0].blockchainId === 1 ? 'Ethereum' :'Polygon'}
+                                                                        {/* Blockchain: {route.path[0].blockchainId === 1 ? 'Ethereum' : route.path[0].blockchainId == 137 ?'Polygon': 'binancesmartchain'} */}
                                                                     </li>
                                                                     <li className="mb-1">
                                                                         <span className="font-semibold">
@@ -597,6 +639,7 @@ const BuySellSwap = () => {
                                                                         &nbsp;—&nbsp;
                                                                         Amount: {route.path[route.path.length - 1].amount} &nbsp;
                                                                         Blockchain: {route.path[route.path.length - 1].blockchainId === 1 ? 'Ethereum' : 'Polygon'}
+                                                                        {/* Blockchain: {route.path[route.path.length - 1].blockchainId === 1 ? 'Ethereum' : route.path[route.path.length - 1].blockchainId == 137 ?'Polygon': 'binancesmartchain'} */}
                                                                     </li>
                                                                 </>
                                                             )}
@@ -605,7 +648,7 @@ const BuySellSwap = () => {
                                                 </>
                                             ))
                                         ) : (
-                                            <p>No routing data available</p>
+                                            <p>Out of selected coins either one or more coin is not supported.</p>
                                         )}
                                     </>
                                 )}
