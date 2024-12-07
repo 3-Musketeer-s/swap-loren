@@ -187,7 +187,7 @@ const BuySellSwap = () => {
     
 
     // Execute swap transaction
-    const executeSwap = async (transaction) => {
+    const executeSwap = async (transaction,swapDetails) => {
         try {
             const provider = new ethers.BrowserProvider(window.ethereum);            
             const signer = await provider.getSigner();
@@ -197,12 +197,17 @@ const BuySellSwap = () => {
                 data: transaction.data,
                 value: transaction.value ? ethers.getBigInt(transaction.value) : undefined, // Adjusted here
             });
+
             console.log('Transaction sent:', tx);
             await tx.wait();
             console.log('Transaction confirmed:', tx.hash);
+            alert('Transaction confirmed');
+            swapDetails.transactionHash = tx.hash;
+            await transactionCompletionLog(swapDetails);
             return tx.hash;
         } catch (error) {
             console.error('Error executing swap transaction:', error);
+                  alert('Error executing swap transaction');
             throw error;
         }
     };
@@ -286,15 +291,42 @@ const BuySellSwap = () => {
               //  }
             }
 
-            // Step 3: Execute the swap
-            await executeSwap(swapData.transaction);
-            console.log("Swap executed");
+            const swapDetails = {
+                srcTokenAddress: currency.address,
+                srcTokenAddressName: currency.name,
+                srcTokenAmount: sellAmount.toString(),
+                srcTokenBlockchain: upChain,
+                dstTokenAddress: buyCurrency.address,
+                dstTokenAddressName: buyCurrency.name,
+                dstTokenBlockchain: downChain,
+                fromAddress: accountAddress,
+                quoteId: quoteId,
+                transactionHash: null
+            };
 
+            // Step 3: Execute the swap
+            await executeSwap(swapData.transaction,swapDetails);
+            console.log("Swap executed");
+            alert("Swap Execution is completed");
         } catch (error) {
             console.error("Error in handleProceedClick:", error);
             toast.error("Failed to execute swap. Please try again.");
         }
     };
+
+
+    const transactionCompletionLog = async (swapDetails) => {
+        const response = await axios.post('http://localhost:4300/Log',
+            swapDetails,
+            {
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        return response;
+    }
 
     useEffect(() => {
         checkMetaMask(); // Check MetaMask on component mount
